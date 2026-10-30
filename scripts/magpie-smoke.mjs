@@ -50,6 +50,7 @@ async function freePort() {
 
 const gatewayPort = await freePort();
 const webPort = await freePort();
+const endpoint = `http://127.0.0.1:${gatewayPort}`;
 const upstream = createServer(async (request, response) => {
   for await (const _chunk of request) { /* 消费测试请求，不保存正文 */ }
   const data = request.method === 'POST' ? {
@@ -66,6 +67,17 @@ const upstream = createServer(async (request, response) => {
 }).listen(0, '127.0.0.1');
 await once(upstream, 'listening');
 let web;
+
+async function startWeb() {
+  web = spawn(binary, ['web', '--addr', `127.0.0.1:${webPort}`, '--no-open'], {
+    env, cwd: configDir, stdio: 'ignore',
+  });
+  await until(async () => {
+    const list = await fetch(endpoint + '/v1/models', { signal: AbortSignal.timeout(500) })
+      .then(response => response.json()).catch(() => null);
+    return list?.data?.some(model => model.id === `${providerId}/two`);
+  }, '隔离网关未就绪');
+}
 
 async function stopWeb() {
   if (!web || web.exitCode !== null || web.signalCode !== null) return;
@@ -93,13 +105,28 @@ async function optional(file) {
   });
 }
 
-async function until(check, label) {
-  const end = Date.now() + 15000;
+async function until(check, label, timeout = 15000) {
+  const end = Date.now() + timeout;
   while (Date.now() < end) {
     if (await check()) return;
     await delay(100);
   }
   throw new Error(`${label}\n${await optional(path.join(stateDir, 'status.json'))}`);
+}
+
+async function workerExited(label) {
+  const lease = JSON.parse(await optional(path.join(stateDir, 'worker.json')) ?? 'null');
+  await until(async () => {
+    if (await optional(path.join(stateDir, 'worker.json')) !== null) return false;
+    if (!lease) return true;
+    try {
+      process.kill(lease.pid, 0);
+      return false;
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+      return true;
+    }
+  }, label, 5000);
 }
 
 let added = false;
@@ -118,7 +145,12 @@ try {
   await cli('plugin', 'add', root);
   added = true;
   await until(async () => !!await optional(path.join(stateDir, 'control.json')), '官方宿主未初始化插件');
+  await workerExited('CLI 安装结束后同步器未退出');
+
+  // 离线 CLI 只保证记录选择，运行中的 Magpie 宿主负责实际同步
   await cli('pink', `magpie/${providerId}/one`);
+  await workerExited('离线 CLI 结束后同步器未退出');
+  await startWeb();
   await until(
     async () => (await optional(settings))?.includes(`${providerId}/one`),
     '原生 Agent 连接未落地',
@@ -127,15 +159,6 @@ try {
   await cli('pink', `magpie/${providerId}/two`);
   await until(async () => (await optional(settings))?.includes(`${providerId}/two`), '原生模型切换未落地');
 
-  web = spawn(binary, ['web', '--addr', `127.0.0.1:${webPort}`, '--no-open'], {
-    env, cwd: configDir, stdio: 'ignore',
-  });
-  const endpoint = `http://127.0.0.1:${gatewayPort}`;
-  await until(async () => {
-    const list = await fetch(endpoint + '/v1/models', { signal: AbortSignal.timeout(500) })
-      .then(response => response.json()).catch(() => null);
-    return list?.data?.some(model => model.id === `${providerId}/two`);
-  }, '隔离网关未就绪');
   const answer = await fetch(endpoint + '/v1/chat/completions', {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer magpie-pink' },
     body: JSON.stringify({
@@ -151,7 +174,16 @@ try {
   assert.equal(usage.input, 21);
   assert.equal(usage.output, 7);
   assert.equal(usage.rows[0].agentName, 'PinK');
+  const connectedModels = await readFile(models, 'utf8');
+  const connectedSettings = await readFile(settings, 'utf8');
+  await stopWeb();
+  await workerExited('官方 Magpie 退出后同步器未退出');
+  assert.equal(await readFile(models, 'utf8'), connectedModels);
+  assert.equal(await readFile(settings, 'utf8'), connectedSettings);
+
   await cli('pink', 'default');
+  await workerExited('离线断开命令结束后同步器未退出');
+  await startWeb();
   await until(async () => await optional(models) === null, '原生断开未恢复');
   assert.equal(await readFile(settings, 'utf8'), original);
 
@@ -168,7 +200,7 @@ try {
   await until(async () => await optional(models) === null, '官方移除插件未恢复');
   await until(async () => await optional(path.join(stateDir, 'worker.json')) === null, '移除后同步器未退出');
   assert.equal(await readFile(settings, 'utf8'), original);
-  console.log('官方 Magpie：原生 Agent 生命周期、网关调用与 PinK 用量归属均通过（模拟上游）');
+  console.log('官方 Magpie：宿主退出、离线操作补同步、原生 Agent 生命周期与用量归属通过（模拟上游）');
 } finally {
   if (added) await cli('plugin', 'rm', root).catch(() => {});
   await writeFile(path.join(configDir, 'plugins.json'), '{"plugins":[]}').catch(() => {});

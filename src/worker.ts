@@ -31,10 +31,7 @@ async function claimLease(leasePath: string, launch: Launch, nonce: string): Pro
   return !!handle;
 }
 
-/** 运行独立同步进程
- *
- * 宿主退出后继续观察断开操作，避免 Magpie 强制结束宿主时漏掉配置恢复。
- */
+/** 同步配置至宿主退出，停用或移除时先完成恢复 */
 async function run() {
   const launchPath = process.argv[2];
   if (!launchPath) throw new Error('缺少启动参数');
@@ -57,25 +54,25 @@ async function run() {
       }
 
       const next: Launch = JSON.parse(await readFile(launchPath, 'utf8'));
-      if (next.generation !== launch.generation) {
-        // CLI 的临时宿主可能已经退出，更新时由旧同步器完成接力
-        await unlink(leasePath);
-        spawnWorker(next, launchPath, error => {
-          void bridge.report(error);
-        });
-        break;
-      }
-
       let enabled: boolean | undefined;
       try {
         enabled = await pluginEnabled(launch);
+        // 停用或移除先恢复配置；更新接力必须有活跃宿主
+        if (enabled && next.generation !== launch.generation) {
+          await unlink(leasePath);
+          if (processAlive(next.parentPid)) {
+            spawnWorker(next, launchPath, error => {
+              void bridge.report(error);
+            });
+          }
+          break;
+        }
         await bridge.reconcile();
       } catch (error) {
         await bridge.report(error);
       }
-      // 启用期间继续观察 CLI 的连接操作；无法读取配置且宿主已退出时停止
-      if (enabled === false) break;
-      if (enabled === undefined && !processAlive(next.parentPid)) break;
+      // 先处理宿主退出前留下的操作，再结束后台进程
+      if (enabled === false || !processAlive(next.parentPid)) break;
       await delay(500);
     }
   } finally {

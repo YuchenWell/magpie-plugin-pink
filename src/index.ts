@@ -32,6 +32,8 @@ async function start(options: PluginOptions = {}) {
       if (!await pluginEnabled(launch)) return;
       const lease = await readWorkerLease(leasePath);
       if (workerAlive(lease)) return;
+      // 临时 CLI 可能留下已退出的 parentPid，由存活宿主接管启动信息
+      await replaceFile(launchPath, JSON.stringify(launch));
       spawnWorker(launch, launchPath, error => {
         void bridge.report(error);
       });

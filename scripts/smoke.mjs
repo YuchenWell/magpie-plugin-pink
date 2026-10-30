@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -27,8 +27,8 @@ async function optional(file) {
   });
 }
 
-async function until(check, label) {
-  const end = Date.now() + 15000;
+async function until(check, label, timeout = 15000) {
+  const end = Date.now() + timeout;
   while (Date.now() < end) {
     if (await check()) return;
     await delay(50);
@@ -82,17 +82,29 @@ async function stop(child) {
   await exited;
 }
 
-async function choose() {
-  const models = [{ id: 'demo/model', name: 'Demo', context: 128000, output: 8192 }];
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function choose(id = 'demo/model') {
+  const models = ['demo/model', 'demo/other'].map(id => ({
+    id, name: id, context: 128000, output: 8192,
+  }));
   await writeFile(control, JSON.stringify({
-    model: 'magpie/demo/model',
+    model: 'magpie/' + id,
     ...connect({
       gateway: { v1: 'http://127.0.0.1:3425/v1', key: 'magpie-pink' },
-      model: models[0],
+      model: models.find(model => model.id === id),
       models,
     }),
   }));
   await until(async () => (await optional(modelFile))?.includes('Bearer magpie-pink'), '连接落地');
+  await until(async () => (await optional(settings))?.includes(id), '所选默认模型落地');
 }
 
 try {
@@ -116,25 +128,51 @@ try {
   );
   assert.equal(currentSettings['chat.defaultModel'], 'demo/model');
 
-  // Magpie 用 Kill 终止宿主；同步器必须仍能观察到后续断开
-  await Promise.all([stop(first), stop(second)]);
-  const oldLease = JSON.parse(await readFile(path.join(stateDir, 'worker.json'), 'utf8'));
+  // 一个宿主退出不影响另一个；最后一个退出时不得留下后台进程
+  await stop(first);
+  await choose('demo/other');
+  const connectedModels = await readFile(modelFile, 'utf8');
+  const connectedSettings = await readFile(settings, 'utf8');
+  const lastWorker = JSON.parse(await readFile(path.join(stateDir, 'worker.json'), 'utf8'));
+  await stop(second);
+  await until(async () => await optional(path.join(stateDir, 'worker.json')) === null
+    && !processAlive(lastWorker.pid), '插件仍启用时，最后一个宿主退出后同步器应退出', 5000);
+  assert.equal(await readFile(modelFile, 'utf8'), connectedModels);
+  assert.equal(await readFile(settings, 'utf8'), connectedSettings);
+
+  execFileSync(process.execPath, [path.join(root, 'dist', 'cli.mjs'), 'restore'], {
+    cwd: configDir, env: { ...process.env, HOME: home, USERPROFILE: home }, timeout: 10000,
+  });
+  assert.equal(await optional(modelFile), null);
+  assert.equal(await readFile(settings, 'utf8'), original);
+
+  const third = await startHost();
+  await choose();
+  const transient = await startHost();
+  await stop(transient);
   const launchPath = path.join(stateDir, 'launch.json');
+  await until(async () => {
+    const lease = await optional(path.join(stateDir, 'worker.json'));
+    const launch = JSON.parse(await readFile(launchPath, 'utf8'));
+    return lease && processAlive(JSON.parse(lease).pid) && launch.parentPid === third.pid;
+  }, '临时宿主退出后，由仍活跃的宿主接管', 5000);
+  await choose('demo/other');
+  const oldLease = JSON.parse(await readFile(path.join(stateDir, 'worker.json'), 'utf8'));
+  await delay(1200);
+  assert.equal(JSON.parse(await readFile(path.join(stateDir, 'worker.json'), 'utf8')).nonce,
+    oldLease.nonce, '接管后不得反复启动同步器');
+
   const next = JSON.parse(await readFile(launchPath, 'utf8'));
   next.generation += '-updated';
   await writeFile(launchPath, JSON.stringify(next));
   await until(async () => {
     const lease = await optional(path.join(stateDir, 'worker.json'));
     return lease && JSON.parse(lease).nonce !== oldLease.nonce;
-  }, '没有宿主时完成更新接力');
+  }, '宿主存活时完成更新接力');
   await writeFile(control, '{}');
-  await plugin(false);
-  await until(async () => await optional(modelFile) === null, '宿主退出后的配置恢复');
-  await until(async () => await optional(path.join(stateDir, 'worker.json')) === null, '同步器退出');
+  await until(async () => await optional(modelFile) === null, '重启后的断开恢复');
   assert.equal(await readFile(settings, 'utf8'), original);
 
-  await plugin(true);
-  const third = await startHost();
   await choose();
   await plugin(false);
   await stop(third);
@@ -144,7 +182,7 @@ try {
     '移除后的同步器退出',
   );
   assert.equal(await readFile(settings, 'utf8'), original);
-  console.log('纯插件打包、双宿主、宿主强制退出、断开与移除恢复检查通过');
+  console.log('纯插件打包、宿主退出、双宿主接管、重启、断开与移除恢复检查通过');
 } finally {
   await plugin(false).catch(() => {});
   await writeFile(control, '{}').catch(() => {});

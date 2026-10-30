@@ -37,7 +37,7 @@ export async function readWorkerLease(file: string) {
     .catch(() => undefined);
 }
 
-/** 启动独立同步器，让它在宿主结束后仍能完成配置恢复 */
+/** 启动同步器，宿主退出后的最后一轮同步由子进程完成 */
 export function spawnWorker(
   launch: Launch,
   launchPath: string,

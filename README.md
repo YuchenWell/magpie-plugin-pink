@@ -5,7 +5,11 @@
 ## 安装
 
 需要 Magpie 0.1.2136 或更新版本，并先启动一次 PinK。
-在 Magpie 的插件页面输入 `magpie-plugin-pink` 安装，或执行：
+打开 Magpie 的「插件 → 发现」，清空顶部搜索框，滚动到页面底部。
+在「npm 包名、GitHub 仓库或本机文件夹」输入框中填入 `magpie-plugin-pink`，点击「安装」。
+顶部搜索框不一定能找到尚未收录的 Agent 插件。
+
+也可执行：
 
 ```sh
 magpie plugin add magpie-plugin-pink
@@ -13,7 +17,7 @@ magpie plugin add magpie-plugin-pink
 
 也可通过本地安装包安装：
 从 [GitHub Releases](https://github.com/YuchenWell/magpie-plugin-pink/releases/latest)
-下载 `magpie-plugin-pink-0.1.0.tgz`，解压后将包含 `package.json` 的目录命名为 `PinK`。
+下载 `magpie-plugin-pink-0.1.1.tgz`，解压后将包含 `package.json` 的目录命名为 `PinK`。
 在 Magpie 的插件页面添加该目录，或执行：
 
 ```sh
@@ -29,8 +33,12 @@ macOS 的 CLI 位于 `/Applications/magpie.app/Contents/MacOS/magpie`。
 2. 在 PinK 中选择 `Magpie (PinK)` 分组下的模型
 3. 在 Magpie 的用量页面按 PinK 查看调用量、Token 用量和费用
 
-连接和模型切换会自动同步到 PinK，可能需要稍等片刻。
-断开、停用或移除插件时，自动恢复仍由插件管理的配置，保留用户的手动修改。
+请保持 Magpie 桌面或网关服务运行，连接和模型切换会自动同步到 PinK，可能需要稍等片刻。
+在 Magpie 运行期间断开、停用或移除插件，会自动恢复仍由插件管理的配置，保留用户的手动修改。
+Magpie 退出后同步器随之退出，保留连接配置；下次启动并加载插件后继续同步。
+
+Magpie 未运行时，仅执行 CLI 模型选择或断开命令不保证立即修改 PinK，需等下次加载插件。
+离线停用或卸载前，请先使用下方的 `restore` 命令恢复配置；已停用的插件不会在启动时补做恢复。
 
 仅统计经过 Magpie 网关的请求，不导入 PinK 历史会话或关联逐会话费用。
 使用聊天功能仍需登录 PinK。
