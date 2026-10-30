@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.tgz
+*.log
+.DS_Store
+.upstream/
+.tools/
+.checks/
+build/
+.archive/
