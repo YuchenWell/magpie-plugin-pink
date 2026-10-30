@@ -1,13 +1,27 @@
 {
   "name": "magpie-plugin-pink",
   "version": "0.1.0",
-  "private": true,
   "description": "让 PinK 使用 Magpie 中配置的模型，并查看调用用量与费用",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YuchenWell/magpie-plugin-pink.git"
+  },
+  "homepage": "https://github.com/YuchenWell/magpie-plugin-pink#readme",
+  "bugs": {
+    "url": "https://github.com/YuchenWell/magpie-plugin-pink/issues"
+  },
+  "keywords": ["magpie", "magpie-plugin", "pink", "agent"],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "./dist/index.mjs",
   "files": [
     "dist",
     "README.md",
+    "LICENSE",
     "THIRD_PARTY_NOTICES"
   ],
   "engines": {
