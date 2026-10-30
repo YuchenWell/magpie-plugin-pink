@@ -5,14 +5,8 @@
 ## 安装
 
 需要 Magpie 0.1.2136 或更新版本，并先启动一次 PinK。
-在 Magpie 的插件页面输入 `magpie-plugin-pink` 安装，或执行：
-
-```sh
-magpie plugin add magpie-plugin-pink
-```
-
-也可通过本地安装包安装：
-解压安装包，将包含 `package.json` 的目录命名为 `PinK`。
+从 [GitHub Releases](https://github.com/YuchenWell/magpie-plugin-pink/releases/latest)
+下载 `magpie-plugin-pink-0.1.0.tgz`，解压后将包含 `package.json` 的目录命名为 `PinK`。
 在 Magpie 的插件页面添加该目录，或执行：
 
 ```sh
