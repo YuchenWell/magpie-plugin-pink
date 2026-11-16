@@ -102,6 +102,32 @@ describe('配置连接与恢复', () => {
     expect(await readFile(f.models, 'utf8')).toContain('reasoningEffort');
   });
 
+  it('把旧版 contextWindow 升级为 PinK 识别的 maxInputTokens', async () => {
+    const f = await setup();
+    await f.connect();
+    // 模拟旧版写入结果：只有 contextWindow，且 PinK 改写过 maxOutputTokens
+    const legacy = parseConfig(await readFile(f.models, 'utf8'), '') as Record<string, unknown>[];
+    const group = legacy[0]!;
+    const models = (group.models as Record<string, unknown>[]).map(model => {
+      const { maxInputTokens: _ignored, ...rest } = model;
+      return { ...rest, contextWindow: 128000, maxOutputTokens: 1000000 };
+    });
+    await writeFile(f.models, JSON.stringify([
+      { ...group, models, settings: { 'example/model': { reasoningEffort: 'high' } } },
+    ], null, 2));
+    await f.manager.sync(f.id);
+    const updated = parseConfig(await readFile(f.models, 'utf8'), '') as Record<string, unknown>[];
+    expect((updated[0]!.models as Record<string, unknown>[])[0]).toMatchObject({
+      maxInputTokens: 128000 - 8192, maxOutputTokens: 8192,
+    });
+    expect((updated[0]!.models as Record<string, unknown>[])[0]).not.toHaveProperty('contextWindow');
+    expect(updated[0]!.settings).toEqual({ 'example/model': { reasoningEffort: 'high' } });
+    expect((await f.manager.list())[0]?.error).toBeUndefined();
+    await f.manager.disconnect(f.id);
+    // 手动改写过的文件不做整文件还原，只移除插件写入的组
+    expect(parseConfig(await readFile(f.models, 'utf8'), '')).toEqual([]);
+  });
+
   it('用户手动修改模型端点后，自动同步和断开均不会覆盖', async () => {
     const f = await setup();
     await f.connect();

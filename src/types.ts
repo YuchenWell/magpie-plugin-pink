@@ -86,6 +86,7 @@ export interface Launch {
 export interface BridgeStatus {
   state: 'idle' | 'connected' | 'disconnected' | 'error';
   updatedAt: string;
+  format?: number;
   root?: string;
   appliedModel?: string;
   appliedDigest?: string;

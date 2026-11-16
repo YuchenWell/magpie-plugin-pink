@@ -104,6 +104,7 @@ export async function pluginEnabled(launch: Launch): Promise<boolean> {
   }
 
   const own = await realpath(launch.packageRoot).catch(() => launch.packageRoot);
+  // 同一插件可能同时存在已停用的旧条目和启用的新条目，任一启用即视为启用
   for (const item of data.plugins) {
     if (!object(item) || typeof item.spec !== 'string') continue;
     const spec = item.spec;
@@ -115,7 +116,7 @@ export async function pluginEnabled(launch: Launch): Promise<boolean> {
       const resolved = await realpath(path.resolve(launch.configDir, local)).catch(() => '');
       match = resolved === own;
     }
-    if (match) return item.off !== true;
+    if (match && item.off !== true) return true;
   }
   return false;
 }

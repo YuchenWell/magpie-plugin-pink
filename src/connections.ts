@@ -39,8 +39,33 @@ function settings(content: string | null, file: string): JsonObject {
   return value;
 }
 
-function ownsFields(current: JsonObject, previous: JsonObject): boolean {
-  return Object.keys(previous).every(key => equal(current[key], previous[key]));
+/** 由 Magpie 模型目录推导的字段
+ *
+ * 旧版写 contextWindow，PinK 不读取；maxInputTokens、maxOutputTokens 随目录变化。
+ * 这些字段不体现用户意图，同步时以目录为准重写，不算手动修改。
+ */
+const DERIVED_KEYS = ['contextWindow', 'maxInputTokens', 'maxOutputTokens'];
+
+/** 插件不接管的用户新增字段，例如 PinK 写入的 reasoning 偏好 */
+const PRESERVED_KEYS = ['settings'];
+
+/** 判断当前配置是否仍是插件写入的那一份，忽略可重新推导的 token 字段 */
+function owned(current: JsonObject, previous: JsonObject): boolean {
+  for (const key of Object.keys(current)) {
+    if (!Object.hasOwn(previous, key) && !PRESERVED_KEYS.includes(key)
+      && !DERIVED_KEYS.includes(key)) return false;
+  }
+  for (const [key, before] of Object.entries(previous)) {
+    if (DERIVED_KEYS.includes(key)) continue;
+    const now = current[key];
+    if (key === 'models' && Array.isArray(before) && Array.isArray(now)) {
+      if (now.length !== before.length) return false;
+      if (!now.every((model, index) => object(model) && owned(model, before[index]))) return false;
+      continue;
+    }
+    if (!equal(now, before)) return false;
+  }
+  return true;
 }
 
 export class ConnectionManager {
@@ -76,7 +101,7 @@ export class ConnectionManager {
           const content = await readOptional(managed.path);
           const list = groups(content, managed.path);
           const current = list[groupIndex(list)];
-          if (!current || !ownsFields(current, managed.group)) {
+          if (!current || !owned(current, managed.group)) {
             return { ...connection, error: '模型组已被手动修改或移除，自动同步已暂停' };
           }
         }
@@ -186,16 +211,16 @@ export class ConnectionManager {
       const current = list[index];
       const managed = connection.models.find(item => item.path === file);
       if (!managed && current) throw new UserError('已有非本插件管理的同名模型组，请先重命名', 409);
-      if (managed && (!current || !ownsFields(current, managed.group))) {
+      if (managed && (!current || !owned(current, managed.group))) {
         throw new UserError('模型组已被手动修改或移除，已停止同步，请先核对配置', 409);
       }
 
       let after = before ?? '[]\n';
       if (managed) {
         managed.restoreWhole &&= before === managed.lastContent;
-        for (const [key, value] of Object.entries(desired)) {
-          if (!equal(current?.[key], value)) after = editJson(after, [index, key], value);
-        }
+        const next = current?.settings === undefined
+          ? desired : { ...desired, settings: current.settings };
+        if (!equal(current, next)) after = editJson(after, [index], next);
         managed.group = desired;
         managed.lastContent = after;
       } else {
@@ -265,8 +290,8 @@ export class ConnectionManager {
 
         const current = { ...list[index] };
         const preferences = current.settings;
-        delete current.settings;
-        if (!equal(current, managed.group)) {
+        // 旧格式的 token 字段仍由目录决定，不算用户改动
+        if (!owned(current, managed.group)) {
           conflicts.push(`${managed.path}：模型组包含用户更改，已保留；请手动移除后再次断开`);
           keptModels.push(managed);
           continue;

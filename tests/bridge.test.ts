@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -126,10 +127,34 @@ it('插件列表不可读时不视为卸载，不动已有配置', async () => {
   expect(await readFile(f.models, 'utf8')).toBe(before);
 });
 
+it('旧版失败记录不阻止升级后的再次同步', async () => {
+  const f = await setup();
+  await f.choose();
+  const control = await readFile(f.bridge.control, 'utf8');
+  await writeFile(f.bridge.statusPath, JSON.stringify({
+    state: 'error', updatedAt: '', formatted: true,
+    appliedModel: 'magpie/example/model',
+    failedControl: createHash('sha256').update(control).digest('hex'),
+  }));
+  expect(await f.bridge.reconcile()).toBe(true);
+  expect((await f.bridge.status()).state).toBe('connected');
+});
+
 it('支持带版本的 npm 安装标识', async () => {
   const f = await setup();
   await writeFile(f.plugins, JSON.stringify({ plugins: [{ spec: 'magpie-plugin-pink@0.1.0' }] }));
   expect(await pluginEnabled(f.launch)).toBe(true);
   await writeFile(f.plugins, JSON.stringify({ plugins: [] }));
   expect(await pluginEnabled(f.launch)).toBe(false);
+});
+
+it('停用的旧条目不妨碍本地条目继续同步', async () => {
+  const f = await setup();
+  await writeFile(f.plugins, JSON.stringify({ plugins: [
+    { spec: 'magpie-plugin-pink@latest', off: true },
+    { spec: f.directory },
+  ] }));
+  await f.choose();
+  expect(await f.bridge.reconcile()).toBe(true);
+  expect(await readFile(f.models, 'utf8')).toContain('Bearer magpie-pink');
 });
