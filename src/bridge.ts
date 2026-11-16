@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { ConnectionManager } from './connections.js';
 import { canonicalRoot, defaultRoot, inspectInstance } from './discovery.js';
-import { catalogFromControl } from './gateway.js';
+import { catalogFromControl, GROUP_FORMAT } from './gateway.js';
 import { editJson, errorMessage, object, UserError } from './json.js';
 import { digest, pluginEnabled, stateDirectory } from './runtime.js';
 import { readOptional, replaceFile, StateStore } from './store.js';
@@ -94,13 +94,16 @@ export class Bridge {
       && typeof current.key === 'string' && !!current.key;
     const status = await this.status();
     const controlDigest = digest(before);
+    // 写入格式升级后允许复跑一次，避免旧版失败记录永久挡住重试
+    const latched = status.failedControl === controlDigest
+      && (status.format ?? 1) === GROUP_FORMAT;
 
     if (!wantsConnection) {
-      if (status.failedControl === controlDigest) return false;
+      if (latched) return false;
       await this.restore();
       return false;
     }
-    if (status.failedControl === controlDigest) return !!status.appliedModel;
+    if (latched) return !!status.appliedModel;
 
     try {
       this.catalog = catalogFromControl(current);
@@ -108,7 +111,8 @@ export class Bridge {
       if (!this.catalog.models.some(item => item.id === model)) throw new UserError('所选模型不在目录中');
       const instance = await this.instance();
       const profileIds = this.launch.options.profileIds ?? instance.profiles.map(profile => profile.id);
-      const desired = digest([model, this.catalog, instance.root, profileIds]);
+      // 写入格式版本也参与摘要，升级后即使目录未变也会重写一次配置
+      const desired = digest([GROUP_FORMAT, model, this.catalog, instance.root, profileIds]);
       if (status.state === 'connected' && status.appliedDigest === desired) return true;
 
       // 范围变化先由用户断开，避免新目录失败后旧连接已经被拆除
@@ -125,7 +129,8 @@ export class Bridge {
         defaultModelId: status.appliedModel === selected ? undefined : model,
       });
       await this.publish({
-        state: 'connected', root: instance.root, appliedModel: selected, appliedDigest: desired,
+        state: 'connected', format: GROUP_FORMAT, root: instance.root,
+        appliedModel: selected, appliedDigest: desired,
       });
       return true;
     } catch (error) {
@@ -134,7 +139,7 @@ export class Bridge {
         await replaceFile(this.control, editJson(before, ['model'], status.appliedModel));
       }
       await this.publish({
-        ...status, state: 'error', error: errorMessage(error),
+        ...status, state: 'error', format: GROUP_FORMAT, error: errorMessage(error),
         failedControl: digest(await readOptional(this.control)),
       });
       return !!status.appliedModel;

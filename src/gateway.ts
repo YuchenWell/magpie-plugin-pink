@@ -3,6 +3,13 @@ import type { Catalog, CatalogModel, JsonObject } from './types.js';
 
 export const GROUP_NAME = 'Magpie (PinK)';
 
+/** 模型组写入格式版本
+ *
+ * PinK 只识别 maxInputTokens；旧版写入的 contextWindow 会被忽略。
+ * 版本进入同步摘要，升级后无需用户重新操作即可重写一次配置。
+ */
+export const GROUP_FORMAT = 2;
+
 function tokenLimit(value: unknown, fallback: number): number {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     return Math.floor(value);
@@ -50,7 +57,9 @@ export function modelGroup(catalog: Catalog): JsonObject {
       id: model.id, name: model.name,
       url: `${catalog.baseUrl}/v1/chat/completions`,
       toolCalling: model.tools, vision: model.vision,
-      contextWindow: model.context, maxOutputTokens: model.output,
+      // PinK 把 maxInputTokens 当作提示词预算，并与 maxOutputTokens 相加得到上下文窗口
+      maxInputTokens: model.context - model.output,
+      maxOutputTokens: model.output,
       requestHeaders: { Authorization: `Bearer ${catalog.key ?? 'magpie-pink'}` },
       ...(model.efforts.length ? {
         supportsReasoningEffort: model.efforts, reasoningEffortFormat: 'chat-completions',
